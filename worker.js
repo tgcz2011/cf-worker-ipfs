@@ -1,24 +1,23 @@
 /**
- * Cloudflare Worker 实现 IPFS 图床
- * 功能：图片上传、IPFS 固定、元数据存储（KV）、前端管理页面
+ * 修正说明：
+ * 1. 新增 API 路径调试日志（输出实际请求的 URL）
+ * 2. 修正请求头的 Content-Type 为 application/octet-stream（Cloudflare 要求）
+ * 3. 新增 Token 权限校验逻辑（通过预请求验证）
  */
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     
-    // 前端页面路由（根路径返回 HTML）
     if (request.method === 'GET' && url.pathname === '/') {
       return new Response(HTML_TEMPLATE, {
         headers: { 'Content-Type': 'text/html;charset=UTF-8' }
       });
     }
 
-    // 图片上传接口
     if (request.method === 'POST' && url.pathname === '/upload') {
       return this.handleUpload(request, env);
     }
 
-    // 图片列表接口
     if (request.method === 'GET' && url.pathname === '/images') {
       return this.handleListImages(env);
     }
@@ -38,22 +37,38 @@ export default {
     }
 
     try {
-      // 上传到 Cloudflare IPFS 固定服务
-      const ipfsResponse = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ipfs/pins`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${env.CF_API_TOKEN}`,
-            'Content-Type': file.type
-          },
-          body: file
-        }
-      );
+      // 调试：输出实际请求的 API URL
+      const apiUrl = `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ipfs/pins`;
+      console.log('[DEBUG] IPFS API URL:', apiUrl);
+
+      // 验证 Account ID 格式（16 位十六进制字符）
+      if (!/^[0-9a-f]{32}$/i.test(env.CF_ACCOUNT_ID)) {
+        throw new Error('CF_ACCOUNT_ID 格式错误（应为 32 位十六进制字符串）');
+      }
+
+      // 预检查 Token 权限（可选调试步骤）
+      const authTest = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
+        headers: { 'Authorization': `Bearer ${env.CF_API_TOKEN}` }
+      });
+      if (!authTest.ok) {
+        const tokenError = await authTest.json();
+        throw new Error(`API Token 验证失败: ${tokenError.errors?.[0]?.message || '权限不足'}`);
+      }
+
+      // 上传文件到 IPFS（修正 Content-Type 为 application/octet-stream）
+      const ipfsResponse = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${env.CF_API_TOKEN}`,
+          'Content-Type': 'application/octet-stream', // 强制使用二进制流类型
+          'X-Api-User': 'worker-ipfs-gallery'         // 可选：标识请求来源
+        },
+        body: file // 直接传递文件内容（二进制流）
+      });
 
       const ipfsData = await ipfsResponse.json();
       if (!ipfsResponse.ok) {
-        const errorMsg = ipfsData.errors?.[0]?.message || 'IPFS 上传失败';
+        const errorMsg = ipfsData.errors?.[0]?.message || JSON.stringify(ipfsData);
         throw new Error(`IPFS 接口错误: ${errorMsg}`);
       }
 
@@ -61,7 +76,6 @@ export default {
       const fileName = file.name;
       const timestamp = Date.now();
 
-      // 存储元数据到 KV
       await env.IPFS_GALLERY.put(cid, JSON.stringify({
         cid,
         fileName,
@@ -121,7 +135,6 @@ const HTML_TEMPLATE = `
   <div class="container mx-auto p-4 max-w-3xl">
     <h1 class="text-2xl font-bold text-gray-900 mb-8 text-center">IPFS 图床</h1>
 
-    <!-- 上传区域 -->
     <div class="bg-white rounded-lg shadow-md p-6 mb-8">
       <div class="drop-zone p-8 text-center">
         <p class="text-gray-600 mb-4">拖动文件到此处上传，或点击选择文件</p>
@@ -130,17 +143,17 @@ const HTML_TEMPLATE = `
           选择图片
         </button>
       </div>
-      <div id="uploadStatus" class="mt-4 text-sm"></div>
+      <div id="uploadStatus" class="mt-4 text-sm text-red-500"></div>
     </div>
 
-    <!-- 图片列表 -->
     <div class="bg-white rounded-lg shadow-md p-6">
       <h2 class="text-lg font-semibold text-gray-800 mb-4">已上传图片</h2>
       <div id="imageList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
     </div>
   </div>
-
-  <script>
+</body>
+</html>
+    `  <script>
     // DOM 元素引用
     const dropZone = document.querySelector('.drop-zone');
     const fileInput = document.getElementById('fileInput');
