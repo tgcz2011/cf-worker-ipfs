@@ -2,9 +2,14 @@ name = "ipfs-gallery-worker"
 main = "worker.js"
 compatibility_date = "2025-05-09"
 workers_dev = true
-[kv_namespaces]
-- binding = "IPFS_GALLERY"
-  id = "fb4a4f1a948941b3a5e5fdbc028c20ad"
-[vars]
+[[
+kv_namespaces
+]]
+binding = "IPFS_GALLERY"
+id = "fb4a4f1a948941b3a5e5fdbc028c20ad"
+
+[
+vars
+]
 CF_ACCOUNT_ID = "ec7da0a1e1f36f7ad2c426e6b2d6fdaa"
 CF_API_TOKEN = "Ekdav_j1u2QxG4_2u54LT-rNoXCwXAfi0wJ3L2PA"
